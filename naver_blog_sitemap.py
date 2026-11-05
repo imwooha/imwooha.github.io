@@ -152,32 +152,75 @@ def write_sitemaps(urls_dates: list[tuple[str, str | None]], out: Path, blog_id:
     return files
 
 
-def write_hub(posts: list[dict], blog_id: str, home: str, latest: str | None,
-              hub: Path, site_url: str) -> None:
+def collect_blogger(blog_url: str) -> list[dict]:
+    """Blogger(blogspot) 공개 글 목록을 피드(JSON)로 가져온다. 최신 글이 위."""
+    base = blog_url.rstrip("/")
+    if not base.startswith("http"):
+        base = "https://" + base
+    base = re.sub(r"/sitemap\.xml$", "", base)
+    posts, start, size = [], 1, 150
+    while True:
+        q = urllib.parse.urlencode({"alt": "json", "max-results": size, "start-index": start})
+        req = urllib.request.Request(f"{base}/feeds/posts/default?{q}", headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            feed = json.load(r)["feed"]
+        entries = feed.get("entry", [])
+        for e in entries:
+            url = next((l["href"] for l in e.get("link", []) if l.get("rel") == "alternate"), None)
+            if not url:
+                continue
+            posts.append({
+                "url": url,
+                "title": e.get("title", {}).get("$t", "").strip() or url,
+                "date": e.get("published", {}).get("$t", "")[:10] or None,
+            })
+        if len(entries) < size:
+            break
+        start += size
+    print(f"Blogger '{base}': 공개 글 {len(posts)}개")
+    return posts
+
+
+def write_hub(sections: list[dict], hub: Path, site_url: str) -> None:
     """구글봇용 링크 모음 사이트. 사이트맵에는 이 사이트 주소만 넣는다
-    (사이트맵에 다른 도메인 주소를 넣으면 구글이 무시함). 네이버 글은
-    index.html 안의 <a href> 링크로 구글봇이 따라간다."""
+    (사이트맵에 다른 도메인 주소를 넣으면 구글이 무시함). 블로그 글은
+    index.html 안의 <a href> 링크로 구글봇이 따라간다.
+    sections: [{"name", "home", "posts": [{url, title, date}]}]"""
     hub.mkdir(parents=True, exist_ok=True)
     site_url = site_url.rstrip("/") + "/"
     h = lambda s: escape(s, {'"': "&quot;"})
-    items = "\n".join(
-        f'      <li><a href="{h(p["url"])}">{h(p["title"])}</a>'
-        + (f' <time datetime="{p["date"]}">{p["date"]}</time>' if p["date"] else "")
-        + "</li>"
-        for p in posts
-    )
-    updated = latest or dt.date.today().isoformat()
+    total = sum(len(s["posts"]) for s in sections)
+    dates = [p["date"] for s in sections for p in s["posts"] if p["date"]]
+    updated = max(dates) if dates else dt.date.today().isoformat()
+
+    blocks = []
+    for s in sections:
+        items = "\n".join(
+            f'      <li><a href="{h(p["url"])}">{h(p["title"])}</a>'
+            + (f' <time datetime="{p["date"]}">{p["date"]}</time>' if p["date"] else "")
+            + "</li>"
+            for p in s["posts"]
+        )
+        blocks.append(f"""    <section>
+    <h2>{h(s["name"])}</h2>
+    <p class="meta"><a href="{h(s["home"])}">{h(s["home"])}</a> · 글 {len(s["posts"])}개</p>
+    <ul>
+{items}
+    </ul>
+    </section>""")
+    names = " · ".join(s["name"] for s in sections)
     html = f"""<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{h(blog_id)} 네이버 블로그 글 모음</title>
-  <meta name="description" content="{h(blog_id)} 네이버 블로그의 전체 글 목록 ({len(posts)}개)">
+  <title>블로그 글 모음</title>
+  <meta name="description" content="{h(names)} 전체 글 목록 ({total}개)">
   <link rel="canonical" href="{h(site_url)}">
   <style>
     body {{ font-family: system-ui, -apple-system, "Malgun Gothic", sans-serif; max-width: 760px; margin: 0 auto; padding: 24px 16px; line-height: 1.6; color: #222; background: #fff; }}
     h1 {{ font-size: 1.4rem; margin-bottom: .2rem; }}
+    h2 {{ font-size: 1.15rem; margin: 2rem 0 .2rem; }}
     p.meta {{ color: #666; margin-top: 0; }}
     ul {{ list-style: none; padding: 0; }}
     li {{ padding: 10px 0; border-bottom: 1px solid #eee; }}
@@ -188,11 +231,9 @@ def write_hub(posts: list[dict], blog_id: str, home: str, latest: str | None,
 </head>
 <body>
   <main>
-    <h1>{h(blog_id)} 네이버 블로그 글 모음</h1>
-    <p class="meta">블로그: <a href="{h(home)}">{h(home)}</a> · 글 {len(posts)}개 · 업데이트 {updated}</p>
-    <ul>
-{items}
-    </ul>
+    <h1>블로그 글 모음</h1>
+    <p class="meta">글 {total}개 · 업데이트 {updated}</p>
+{chr(10).join(blocks)}
   </main>
 </body>
 </html>
@@ -206,7 +247,7 @@ def write_hub(posts: list[dict], blog_id: str, home: str, latest: str | None,
     (hub / "robots.txt").write_text(
         f"User-agent: *\nAllow: /\n\nSitemap: {site_url}sitemap.xml\n", encoding="utf-8")
     (hub / ".nojekyll").write_text("", encoding="utf-8")
-    print(f"링크 모음 사이트 생성: {hub / 'index.html'}")
+    print(f"링크 모음 사이트 생성: {hub / 'index.html'} (글 {total}개)")
 
 
 def main() -> None:
@@ -221,6 +262,8 @@ def main() -> None:
     ap.add_argument("--delay", type=float, default=0.5, help="페이지 요청 간격(초)")
     ap.add_argument("--hub-dir", help="링크 모음 사이트(index.html, sitemap.xml, robots.txt)를 만들 폴더")
     ap.add_argument("--site-url", default="", help="링크 모음 사이트 주소 (예: https://imwooha.github.io)")
+    ap.add_argument("--blogger", action="append", default=[],
+                    help="링크 모음에 함께 넣을 Blogger 주소 (여러 번 지정 가능, 예: https://zerisun.blogspot.com)")
     a = ap.parse_args()
     if a.hub_dir and not a.site_url:
         ap.error("--hub-dir 에는 --site-url 도 필요해요")
@@ -255,7 +298,12 @@ def main() -> None:
             w.writerow([p["url"], p["title"], p["date"] or p["rawDate"]])
 
     if a.hub_dir:
-        write_hub(posts, blog_id, home, latest, Path(a.hub_dir), a.site_url)
+        sections = [{"name": "네이버 블로그", "home": home, "posts": posts}]
+        for b in a.blogger:
+            bposts = collect_blogger(b)
+            bhome = re.sub(r"/sitemap\.xml$", "", b.rstrip("/"))
+            sections.append({"name": "구글 블로그 (Blogger)", "home": bhome, "posts": bposts})
+        write_hub(sections, Path(a.hub_dir), a.site_url)
 
     print(f"블로그 홈 + 글 {len(posts)}개 저장 완료:")
     for f in [*files, urls_txt, links_txt, csv_path]:

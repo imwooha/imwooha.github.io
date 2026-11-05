@@ -7,7 +7,7 @@ set LOG=logs\update.log
 set PYTHONIOENCODING=utf-8
 echo ===== %date% %time% ===== >> "%LOG%"
 git pull --ff-only -q >> "%LOG%" 2>&1
-"C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe" naver_blog_sitemap.py zerisun88 --out "%TEMP%\naver_blog_out" --hub-dir . --site-url https://imwooha.github.io >> "%LOG%" 2>&1
+"C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe" naver_blog_sitemap.py zerisun88 --out "%TEMP%\naver_blog_out" --hub-dir . --site-url https://imwooha.github.io --blogger https://zerisun.blogspot.com >> "%LOG%" 2>&1
 if errorlevel 1 (
   echo FAILED: script error >> "%LOG%"
   exit /b 1
