@@ -1,0 +1,44 @@
+name: Update blog links
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # 매일 00:00 UTC = 한국 시간 오전 9시 (몇 분~수십 분 늦을 수 있음)
+  workflow_dispatch:       # Actions 탭에서 수동 실행
+  push:
+    branches: [main]
+    paths:
+      - naver_blog_sitemap.py
+      - .github/workflows/update.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build link hub
+        run: >
+          python naver_blog_sitemap.py zerisun88
+          --out "$RUNNER_TEMP/out"
+          --hub-dir .
+          --site-url https://imwooha.github.io
+          --blogger https://zerisun.blogspot.com
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html sitemap.xml robots.txt .nojekyll
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Update blog links ($(date -u +%F))"
+            git push
+          fi
